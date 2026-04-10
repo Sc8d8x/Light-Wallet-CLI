@@ -10,7 +10,9 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/tyler-smith/go-bip39"
 )
 
@@ -27,7 +29,7 @@ func GenerateEntropy() (string, error) {
 	return mnemonic, nil
 }
 
-//	реализует ручную деривацию BIP-44 для Ethereum
+//	ручная деривацию BIP-44 для Ethereum
 //
 // Путь: m/44'/60'/0'/0/0
 func DerivePrivateKeyFromMnemonic(mnemonic string) (*ecdsa.PrivateKey, error) {
@@ -118,4 +120,39 @@ func MnemonicToSeed(mnemonic string, passphrase string) (string, error) {
 	}
 	seed := bip39.NewSeed(mnemonic, passphrase)
 	return hex.EncodeToString(seed), nil
+}
+
+// расшифровывка приватного ключа из хранилища
+func LoadPrivateKeyFromKeystore(keyDir, addressHex, password string) (*ecdsa.PrivateKey, error) {
+	// инициализируем хранилище
+	ks := keystore.NewKeyStore(keyDir, keystore.StandardScryptN, keystore.StandardScryptP)
+
+	// создаем объект аккаунта для поиска
+	accountToFind := accounts.Account{Address: common.HexToAddress(addressHex)}
+
+	// ищем аккаунт в хранилище (получаем полный путь к файлу UTC)
+	account, err := ks.Find(accountToFind)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find account: %w", err)
+	}
+
+	return getPrivateKeyFromJSON(account, password)
+}
+
+// вспомогательная функция для ручного декодирования JSON файла ключа
+func getPrivateKeyFromJSON(account accounts.Account, password string) (*ecdsa.PrivateKey, error) {
+	// находим файл ключа вручную (путь есть в account.URL.Path)
+	keyJSON, err := os.ReadFile(account.URL.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	// используем внутренний метод DecryptKey из пакета keystore
+	key, err := keystore.DecryptKey(keyJSON, password)
+	if err != nil {
+		return nil, err
+	}
+
+	// key.PrivateKey - это и есть *ecdsa.PrivateKey
+	return key.PrivateKey, nil
 }

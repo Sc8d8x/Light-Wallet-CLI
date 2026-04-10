@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"fmt"
-	"log"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -13,9 +12,13 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-func checktraction(rpcURL string, privateKey *ecdsa.PrivateKey, toAddress string, amountInEther float64) {
-	client, _ := ethclient.Dial(rpcURL)
+func Checktraction(rpcURL string, privateKey *ecdsa.PrivateKey, toAddress string, amountInEther string) (string, error) {
+	client, err := ethclient.Dial(rpcURL)
 
+	if err != nil {
+		return "", fmt.Errorf("Error connect user: %v", err)
+	}
+	defer client.Close()
 	// Get address sender
 	// получение адреса отправителя
 
@@ -29,13 +32,19 @@ func checktraction(rpcURL string, privateKey *ecdsa.PrivateKey, toAddress string
 	nonce, err := client.PendingNonceAt(context.Background(), fromAdress)
 
 	if err != nil {
-		log.Fatalf("Ошибка получения nonce: %v", err)
+		return "", fmt.Errorf("Ошибка получения nonce: %v", err)
 	}
 
-	// determining the sum in Wei
-	// пределение суммы в Wei
+	// конвертация без потери точности при отправке данных
 
-	value := big.NewInt(int64(amountInEther * 1e18))
+	value := new(big.Float)
+	value.SetString(amountInEther)
+
+	weiMultiplier := new(big.Float).SetInt(big.NewInt(1e18))
+	value.Mul(value, weiMultiplier)
+
+	valueInWei := new(big.Int)
+	value.Int(valueInWei) // конвертация в целое число
 
 	// Setting the gas limit and gas price (Gas Tip Cap / Gas Fee Cap for EIP-1559)
 	// установка лимита газа и цены газа (Gas Tip Cap / Gas Fee Cap для EIP-1559)
@@ -46,33 +55,34 @@ func checktraction(rpcURL string, privateKey *ecdsa.PrivateKey, toAddress string
 
 	gasPrice, err := client.SuggestGasPrice(context.Background())
 	if err != nil {
-		log.Fatalf("Ошибка получения цены газа: %v", err)
+		return "", fmt.Errorf("Ошибка получения цены газа: %v", err)
 	}
 
 	// Creating a transaction structure
 	// создание структуры транзакции
 
 	toAddr := common.HexToAddress(toAddress)
-	tx := types.NewTransaction(nonce, toAddr, value, gasLimit, gasPrice, nil)
+	tx := types.NewTransaction(nonce, toAddr, valueInWei, gasLimit, gasPrice, nil)
 
 	// You need to find out the network ChainID (1 for Mainnet, 11155111 for Sepolia, etc.)
 	// нужно узнать ChainID сети (1 для Mainnet, 11155111 для Sepolia и т.д.)
 
 	chainID, err := client.NetworkID(context.Background())
 	if err != nil {
-		log.Fatalf("Ошибка получения ChainID: %v", err)
+		return "", fmt.Errorf("Ошибка получения ChainID: %v", err)
 	}
 
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
 	if err != nil {
-		log.Fatalf("Ошибка подписания транзакции: %v", err)
+		return "", fmt.Errorf("Ошибка подписания транзакции: %v", err)
 	}
 	// sending a raw transaction to the network
 	//  отправка сырой транзакции в сеть
 	err = client.SendTransaction(context.Background(), signedTx)
 	if err != nil {
-		log.Fatalf("Ошибка отправки транзакции: %v", err)
+		return "", fmt.Errorf("Ошибка отправки транзакции: %v", err)
 	}
 
 	fmt.Printf("Транзакция отправлена! Хеш: %s\n", signedTx.Hash().Hex())
+	return signedTx.Hash().Hex(), nil
 }
